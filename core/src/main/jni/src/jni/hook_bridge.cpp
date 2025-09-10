@@ -177,7 +177,7 @@ LSP_DEF_NATIVE_METHOD(jobject, HookBridge, invokeOriginalMethod, jobject hookMet
     return env->CallObjectMethod(hook_item ? hook_item->GetBackup() : hookMethod, invoke, thiz, args);
 }
 
-LSP_DEF_NATIVE_METHOD(jobject, HookBridge, getClassInitializer, jclass cls) {
+LSP_DEF_NATIVE_METHOD(jobject, HookBridge, findClassInitializer, jclass cls) {
     auto clinit = env->GetStaticMethodID(cls, "<clinit>", "()V");
     return env->ToReflectedMethod(cls, clinit, JNI_TRUE);
 }
