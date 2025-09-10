@@ -457,9 +457,9 @@ public class ConfigFileManager {
         if (uid != -1) {
             if (path.toFile().mkdirs()) {
                 try {
-                    SELinux.setFileContext(path.toString(), "u:object_r:magisk_file:s0");
+                    SELinux.setFileContext(path.toString(), "u:object_r:lsposed_file:s0");
                     Os.chown(path.toString(), uid, uid);
-                    Os.chmod(path.toString(), 0755);
+                    Os.chmod(path.toString(), 493);
                 } catch (ErrnoException e) {
                     throw new IOException(e);
                 }
