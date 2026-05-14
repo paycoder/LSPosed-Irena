@@ -25,7 +25,6 @@ import static org.lsposed.lspd.service.LSPNotificationManager.UPDATED_CHANNEL_ID
 import static org.lsposed.lspd.service.PackageService.PER_USER_RANGE;
 import static org.lsposed.lspd.service.ServiceManager.TAG;
 import static org.lsposed.lspd.service.ServiceManager.getExecutorService;
-import static org.lsposed.lspd.service.ServiceManager.toGlobalNamespace;
 
 import android.app.IApplicationThread;
 import android.app.IUidObserver;
@@ -33,8 +32,6 @@ import android.content.Context;
 import android.content.IIntentReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
@@ -47,12 +44,10 @@ import android.util.Log;
 
 import org.lsposed.daemon.BuildConfig;
 
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
-import java.util.zip.ZipFile;
 
 import hidden.HiddenApiBridge;
 import io.github.libxposed.service.IXposedScopeCallback;
@@ -66,23 +61,6 @@ public class LSPosedService extends ILSPosedService.Stub {
     private static final String EXTRA_REMOVED_FOR_ALL_USERS = "android.intent.extra.REMOVED_FOR_ALL_USERS";
     private static boolean bootCompleted = false;
     private IBinder appThread = null;
-
-    private static boolean isModernModules(ApplicationInfo info) {
-        String[] apks;
-        if (info.splitSourceDirs != null) {
-            apks = Arrays.copyOf(info.splitSourceDirs, info.splitSourceDirs.length + 1);
-            apks[info.splitSourceDirs.length] = info.sourceDir;
-        } else apks = new String[]{info.sourceDir};
-        for (var apk : apks) {
-            try (var zip = new ZipFile(toGlobalNamespace(apk))) {
-                if (zip.getEntry("META-INF/xposed/java_init.list") != null) {
-                    return true;
-                }
-            } catch (IOException ignored) {
-            }
-        }
-        return false;
-    }
 
     @Override
     public ILSPApplicationService requestApplicationService(int uid, int pid, String processName, IBinder heartBeat) {
@@ -126,30 +104,27 @@ public class LSPosedService extends ILSPosedService.Stub {
         var module = ConfigManager.getInstance().getModule(uid);
         String moduleName = (uri != null) ? uri.getSchemeSpecificPart() : (module != null) ? module.packageName : null;
 
-        ApplicationInfo applicationInfo = null;
-        if (moduleName != null) {
-            try {
-                applicationInfo = PackageService.getApplicationInfo(moduleName, PackageManager.GET_META_DATA | PackageService.MATCH_ALL_FLAGS, 0);
-            } catch (Throwable ignored) {
-            }
-        }
-
-        boolean isXposedModule = applicationInfo != null && ((applicationInfo.metaData != null && applicationInfo.metaData.containsKey("xposedminversion")) || isModernModules(applicationInfo));
+        var packageMonitor = PackageMonitorService.getInstance();
+        var packageState = PackageMonitorService.PackageState.empty(moduleName);
+        boolean isXposedModule = false;
 
         switch (intentAction) {
             case Intent.ACTION_PACKAGE_FULLY_REMOVED -> {
                 // for module, remove module
                 // because we only care about when the apk is gone
                 if (moduleName != null) {
+                    packageState = packageMonitor.removePackage(moduleName, userId, allUsers);
                     if (allUsers && ConfigManager.getInstance().removeModule(moduleName)) {
                         isXposedModule = true;
                         broadcastAndShowNotification(moduleName, userId, intent, true);
                     }
+                    isXposedModule |= packageState.xposedModule;
                     LSPNotificationManager.cancelNotification(UPDATED_CHANNEL_ID, moduleName, userId);
                 }
             }
             case Intent.ACTION_PACKAGE_REMOVED -> {
                 if (moduleName != null) {
+                    packageMonitor.removePackageAsync(moduleName, userId, allUsers);
                     LSPNotificationManager.cancelNotification(UPDATED_CHANNEL_ID, moduleName, userId);
                 }
             }
@@ -160,15 +135,18 @@ public class LSPosedService extends ILSPosedService.Stub {
                 if (components != null && !Arrays.stream(components).reduce(false, (p, c) -> p || c.equals(moduleName), Boolean::logicalOr)) {
                     return;
                 }
+                packageState = packageMonitor.updatePackage(moduleName, userId);
+                isXposedModule = packageState.xposedModule;
                 if (isXposedModule) {
                     // When installing a new Xposed module, we update the apk path to mark it as a
                     // module to send a broadcast when modules that have not been activated are
                     // uninstalled.
                     // Deprecated modern modules are still Xposed modules for manager UI, even when
                     // they do not have a daemon-loadable apk path.
-                    var moduleApkPath = ConfigManager.getInstance().getModuleApkPath(applicationInfo);
-                    if (moduleApkPath != null) {
-                        ConfigManager.getInstance().updateModuleApkPath(moduleName, moduleApkPath, false);
+                    if (packageState.moduleInfo != null && packageState.moduleInfo.apkPath != null) {
+                        ConfigManager.getInstance().updateModuleApkPath(moduleName, packageState.moduleInfo.apkPath, false);
+                    } else {
+                        ConfigManager.getInstance().updateCache();
                     }
                 } else if (ConfigManager.getInstance().isUidHooked(uid)) {
                     // it will auto update obsolete scope from database
@@ -179,6 +157,10 @@ public class LSPosedService extends ILSPosedService.Stub {
             case Intent.ACTION_UID_REMOVED -> {
                 // when a package is removed (rather than hide) for a single user
                 // (apk may still be there because of multi-user)
+                if (moduleName != null) {
+                    packageState = packageMonitor.removePackage(moduleName, userId, allUsers);
+                    isXposedModule = packageState.xposedModule;
+                }
                 broadcastAndShowNotification(moduleName, userId, intent, isXposedModule);
                 if (isXposedModule) {
                     // it will auto remove obsolete app and scope from database
