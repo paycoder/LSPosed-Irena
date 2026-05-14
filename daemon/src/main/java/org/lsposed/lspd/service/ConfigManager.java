@@ -869,6 +869,19 @@ public class ConfigManager {
         return true;
     }
 
+    public boolean removeModuleScope(String packageName, List<String> scopePackageNames, int userId) {
+        if (scopePackageNames == null) return false;
+        if (scopePackageNames.contains("system") && userId != 0) return false;
+        executeInTransaction(() -> {
+            for (var scopePackageName : scopePackageNames) {
+                db.delete("scope", "module_pkg_name = ? AND app_pkg_name = ? AND user_id = ?", new String[]{packageName, scopePackageName, String.valueOf(userId)});
+            }
+        });
+        // Called by xposed service, should be async
+        updateCaches(false);
+        return true;
+    }
+
 
     public String[] enabledModules() {
         try (Cursor cursor = db.query("modules", new String[]{"module_pkg_name"}, "enabled = 1", null, null, null, null)) {

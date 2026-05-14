@@ -20,9 +20,6 @@ import io.github.libxposed.service.IXposedService;
 public class LSPInjectedModuleService extends ILSPInjectedModuleService.Stub {
 
     private static final String TAG = "LSPosedInjectedModuleService";
-    private static final long PROP_CAP_SYSTEM = 1L;
-    private static final long PROP_CAP_REMOTE = 1L << 1;
-    private static final long PROP_RT_API_PROTECTION = 1L << 2;
 
     private final String mPackageName;
 
@@ -33,15 +30,10 @@ public class LSPInjectedModuleService extends ILSPInjectedModuleService.Stub {
     }
 
     @Override
-    public int getFrameworkPrivilege() {
-        return IXposedService.FRAMEWORK_PRIVILEGE_ROOT;
-    }
-
-    @Override
     public long getFrameworkProperties() {
-        var properties = PROP_CAP_SYSTEM | PROP_CAP_REMOTE;
+        var properties = IXposedService.PROP_CAP_SYSTEM | IXposedService.PROP_CAP_REMOTE;
         if (ConfigManager.getInstance().dexObfuscate()) {
-            properties |= PROP_RT_API_PROTECTION;
+            properties |= IXposedService.PROP_RT_API_PROTECTION;
         }
         return properties;
     }

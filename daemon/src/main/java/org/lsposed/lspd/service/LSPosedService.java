@@ -44,6 +44,7 @@ import android.util.Log;
 
 import org.lsposed.daemon.BuildConfig;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -253,36 +254,49 @@ public class LSPosedService extends ILSPosedService.Stub {
         } catch (NumberFormatException e) {
             return;
         }
-        var scopePackageName = data.getPath();
-        if (scopePackageName == null) return;
-        scopePackageName = scopePackageName.substring(1);
+        var scopePackageNames = data.getPathSegments();
         var action = data.getQueryParameter("action");
         if (action == null) return;
 
         var iCallback = IXposedScopeCallback.Stub.asInterface(callback);
         try {
-            var applicationInfo = PackageService.getApplicationInfo(scopePackageName, 0, userId);
-            if (applicationInfo == null) {
-                iCallback.onScopeRequestFailed(scopePackageName, "Package not found");
-                return;
+            var validScopePackageNames = new ArrayList<String>();
+            for (var scopePackageName : scopePackageNames) {
+                var applicationInfo = PackageService.getApplicationInfo(scopePackageName, 0, userId);
+                if (applicationInfo == null) {
+                    continue;
+                }
+                validScopePackageNames.add(scopePackageName);
             }
 
             switch (action) {
                 case "approve" -> {
-                    ConfigManager.getInstance().setModuleScope(packageName, scopePackageName, userId);
-                    iCallback.onScopeRequestApproved(scopePackageName);
+                    var approved = new ArrayList<String>();
+                    if (validScopePackageNames.contains("system") && userId != 0) {
+                        iCallback.onScopeRequestFailed("Invalid request");
+                        return;
+                    }
+                    for (var scopePackageName : validScopePackageNames) {
+                        if (ConfigManager.getInstance().setModuleScope(packageName, scopePackageName, userId)) {
+                            approved.add(scopePackageName);
+                        } else {
+                            iCallback.onScopeRequestFailed("Invalid request");
+                            return;
+                        }
+                    }
+                    iCallback.onScopeRequestApproved(approved);
                 }
-                case "deny" -> iCallback.onScopeRequestDenied(scopePackageName);
-                case "delete" -> iCallback.onScopeRequestTimeout(scopePackageName);
+                case "deny" -> iCallback.onScopeRequestFailed("User rejected");
+                case "delete" -> iCallback.onScopeRequestFailed("Timeout");
                 case "block" -> {
                     ConfigManager.getInstance().blockScopeRequest(packageName);
-                    iCallback.onScopeRequestDenied(scopePackageName);
+                    iCallback.onScopeRequestFailed("Blocked by user");
                 }
             }
-            Log.i(TAG, action + " scope " + scopePackageName + " for " + packageName + " in user " + userId);
+            Log.i(TAG, action + " scope " + scopePackageNames + " for " + packageName + " in user " + userId);
         } catch (RemoteException e) {
             try {
-                iCallback.onScopeRequestFailed(scopePackageName, e.getMessage());
+                iCallback.onScopeRequestFailed(e.getMessage());
             } catch (RemoteException ignored) {
                 // callback died
             }

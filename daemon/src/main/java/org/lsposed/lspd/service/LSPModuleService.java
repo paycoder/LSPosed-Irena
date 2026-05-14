@@ -223,7 +223,7 @@ public class LSPModuleService extends IXposedService.Stub {
     }
 
     @Override
-    public int getAPIVersion() throws RemoteException {
+    public int getApiVersion() throws RemoteException {
         ensureModule();
         return XPOSED_API_VERSION;
     }
@@ -247,9 +247,13 @@ public class LSPModuleService extends IXposedService.Stub {
     }
 
     @Override
-    public int getFrameworkPrivilege() throws RemoteException {
+    public long getFrameworkProperties() throws RemoteException {
         ensureModule();
-        return IXposedService.FRAMEWORK_PRIVILEGE_ROOT;
+        var properties = IXposedService.PROP_CAP_SYSTEM | IXposedService.PROP_CAP_REMOTE;
+        if (ConfigManager.getInstance().dexObfuscate()) {
+            properties |= IXposedService.PROP_RT_API_PROTECTION;
+        }
+        return properties;
     }
 
     @Override
@@ -265,26 +269,32 @@ public class LSPModuleService extends IXposedService.Stub {
     }
 
     @Override
-    public void requestScope(String packageName, IXposedScopeCallback callback) throws RemoteException {
+    public void requestScope(List<String> packages, IXposedScopeCallback callback) throws RemoteException {
+        Objects.requireNonNull(packages, "packages cannot be null");
+        Objects.requireNonNull(callback, "callback cannot be null");
         var userId = ensureModule();
+        var scopePackages = new ArrayList<>(packages);
+        if (scopePackages.isEmpty()) {
+            callback.onScopeRequestFailed("Invalid request");
+            return;
+        }
         if (ConfigManager.getInstance().scopeRequestBlocked(loadedModule.packageName)) {
-            callback.onScopeRequestDenied(packageName);
+            callback.onScopeRequestFailed("Blocked by user");
         } else {
-            LSPNotificationManager.requestModuleScope(loadedModule.packageName, userId, packageName, callback);
-            callback.onScopeRequestPrompted(packageName);
+            LSPNotificationManager.requestModuleScope(loadedModule.packageName, userId, scopePackages, callback);
         }
     }
 
     @Override
-    public String removeScope(String packageName) throws RemoteException {
+    public void removeScope(List<String> packages) throws RemoteException {
+        Objects.requireNonNull(packages, "packages cannot be null");
         var userId = ensureModule();
         try {
-            if (!ConfigManager.getInstance().removeModuleScope(loadedModule.packageName, packageName, userId)) {
-                return "Invalid request";
+            if (!ConfigManager.getInstance().removeModuleScope(loadedModule.packageName, packages, userId)) {
+                throw new RemoteException("Invalid request");
             }
-            return null;
         } catch (Throwable e) {
-            return e.getMessage();
+            throw new RemoteException(e.getMessage());
         }
     }
 
